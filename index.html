@@ -7900,21 +7900,33 @@ async function downloadZip(){
     const pg=PAGES.find(p=>p.id===id);
     zip.file(pg?pg.file:`${id}.html`,html);
   });
-  // Add all CSS and JS files
-  Object.entries(STATIC_FILES).forEach(([fname, content]) => {
-    zip.file(fname, content);
-  });
-  // Add images/ placeholder folder with a README
-  zip.file("images/.gitkeep", "");
-  zip.file("images/README.txt",
-    "Place all your property images in this folder.\n\n" +
-    "Required filenames:\n\n" + getSlots().join("\n")
-  );
-  // Add _image-slots.txt at root too
-  zip.file("_image-slots.txt","Place these files in your images/ folder:\n\n"+getSlots().join("\n"));
-  // Add GitHub Actions deploy workflow
+
+  // ── Include all CSS & JS files ────────────────────────────────────────────
+  if(typeof STATIC_FILES !== 'undefined'){
+    Object.entries(STATIC_FILES).forEach(([fname, content]) => {
+      zip.file(fname, content);
+    });
+  }
+
+  // ── Include GitHub Actions workflow ─────────────────────────────────────
   const workflow = `name: Deploy Website\n\non:\n  push:\n    branches: [ main ]\n  workflow_dispatch:\n\npermissions:\n  contents: read\n  pages: write\n  id-token: write\n\nconcurrency:\n  group: "pages"\n  cancel-in-progress: false\n\njobs:\n  deploy:\n    environment:\n      name: github-pages\n      url: \${{ steps.deployment.outputs.page_url }}\n    runs-on: ubuntu-latest\n    steps:\n      - name: Checkout\n        uses: actions/checkout@v4\n      - name: Setup Pages\n        uses: actions/configure-pages@v4\n      - name: Upload artifact\n        uses: actions/upload-pages-artifact@v3\n        with:\n          path: '.'\n      - name: Deploy to GitHub Pages\n        id: deployment\n        uses: actions/deploy-pages@v4\n`;
   zip.file(".github/workflows/deploy.yml", workflow);
+
+  // ── Include uploaded images as actual binary files ──────────────────────
+  S.images.forEach(img=>{
+    if(!img.dataUrl) return;
+    // dataUrl = "data:image/jpeg;base64,/9j/4AAQ..."
+    const parts = img.dataUrl.split(',');
+    if(parts.length < 2) return;
+    const b64 = parts[1];
+    zip.file('images/' + img.target, b64, {base64: true});
+  });
+
+  zip.file("images/README.txt",
+    "Drop your property images into this folder.\n" +
+    "Required filenames:\n\n" + getSlots().join("\n")
+  );
+  zip.file("_image-slots.txt","Place these files in your images/ folder:\n\n"+getSlots().join("\n"));
   const blob=await zip.generateAsync({type:"blob"});
   const url=URL.createObjectURL(blob);
   const a=document.createElement("a");
@@ -8017,6 +8029,18 @@ function moveBlock(pageId,idx,dir){
   if(swap<0||swap>=blocks.length)return;
   [blocks[idx],blocks[swap]]=[blocks[swap],blocks[idx]];
   setBlocks(pageId,blocks);render();
+}
+function setBlock(pageId,idx,key,val){
+  const blocks=[...getBlocks(pageId)];
+  blocks[idx]={...blocks[idx],[key]:val};
+  setBlocks(pageId,blocks);
+}
+function setBlockCard(pageId,idx,cardIdx,key,val){
+  const blocks=[...getBlocks(pageId)];
+  const cards=[...blocks[idx].cards];
+  cards[cardIdx]={...cards[cardIdx],[key]:val};
+  blocks[idx]={...blocks[idx],cards};
+  setBlocks(pageId,blocks);
 }
 function toggleBlockCollapse(pageId,idx){
   const blocks=[...getBlocks(pageId)];
@@ -8531,6 +8555,7 @@ function tabImages(){
   <!-- Stats -->
   <div class="img-stats">
     <div class="img-stat"><strong>${S.images.length}</strong>Uploaded</div>
+    <div class="img-stat" style="color:#2e7d32"><strong>✓</strong>In ZIP</div>
     <div class="img-stat"><strong style="color:#2e7d32">${filled.length}</strong>Matched</div>
     <div class="img-stat"><strong style="color:#e65100">${missing.length}</strong>Still needed</div>
   </div>
@@ -8699,56 +8724,34 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape')closeLightbox();});
 // ── RENDER ────────────────────────────────────────────────────────────────────
 
 // ── FOCUS-SAFE STATE MUTATIONS ────────────────────────────────────────────────
-// set() updates state + debounces preview only — NO full DOM rebuild
-// This prevents inputs losing focus on every keystroke
 function set(k,v){
   S[k]=v;
   updateTopbarSub();
   schedulePrevRefresh();
 }
-
-function setSeo(pg,k,v){
-  S.seo[pg][k]=v;
-  schedulePrevRefresh();
-}
-
-function setCP(idx,key,val){
-  S.customPages[idx][key]=val;
-  schedulePrevRefresh();
-}
-
-function setArr(arr,i,k,v){
-  S[arr][i][k]=v;
-  schedulePrevRefresh();
-}
-
+function setSeo(pg,k,v){S.seo[pg][k]=v;schedulePrevRefresh();}
+function setCP(idx,key,val){S.customPages[idx][key]=val;schedulePrevRefresh();}
+function setArr(arr,i,k,v){S[arr][i][k]=v;schedulePrevRefresh();}
 function setBlock(pageId,idx,key,val){
   const blocks=[...getBlocks(pageId)];
   blocks[idx]={...blocks[idx],[key]:val};
-  setBlocks(pageId,blocks);
-  schedulePrevRefresh();
+  setBlocks(pageId,blocks);schedulePrevRefresh();
 }
-
 function setBlockCard(pageId,idx,cardIdx,key,val){
   const blocks=[...getBlocks(pageId)];
   const cards=[...blocks[idx].cards];
   cards[cardIdx]={...cards[cardIdx],[key]:val};
   blocks[idx]={...blocks[idx],cards};
-  setBlocks(pageId,blocks);
-  schedulePrevRefresh();
+  setBlocks(pageId,blocks);schedulePrevRefresh();
 }
-
-// setAndRender — for structural changes that need full DOM rebuild
 function setAndRender(k,v){S[k]=v;render();}
-
 function schedulePrevRefresh(){
   clearTimeout(PREV_DEBOUNCE);
-  PREV_DEBOUNCE = setTimeout(refreshPreview, 400);
+  PREV_DEBOUNCE=setTimeout(refreshPreview,400);
 }
-
 function updateTopbarSub(){
   const el=document.getElementById('tsub');
-  if(el) el.textContent=`${S.type==="de"?"🇩🇪 German (EN+DE)":"🇬🇧 UK (English)"} · ${ap().size} pages · ${S.images.length} image${S.images.length!==1?"s":""}`;
+  if(el)el.textContent=`${S.type==="de"?"🇩🇪 German (EN+DE)":"🇬🇧 UK (English)"} · ${ap().size} pages · ${S.images.length} image${S.images.length!==1?"s":""}`;
 }
 
 function render(){
@@ -9480,7 +9483,7 @@ render = function(){
   _origRender();
   buildPreviewPageTabs();
   clearTimeout(PREV_DEBOUNCE);
-  PREV_DEBOUNCE = setTimeout(refreshPreview, 150);
+  PREV_DEBOUNCE = setTimeout(refreshPreview, 400);
 };
 
 // Boot: call once after all functions are defined
